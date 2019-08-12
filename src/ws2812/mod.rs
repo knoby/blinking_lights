@@ -19,17 +19,19 @@ impl PwmPatternDB {
         let tim = tim.release();
 
         // Calculate the timer prescaler
-        let frequency = 8.hz();
+        let frequency = 1.hz();
         let timer_clock = stm32f1xx_hal::device::TIM2::get_clk(&clocks);
 
         let ticks = timer_clock.0 / frequency.0;
         let psc = u16((ticks - 1) / (1 << 16)).unwrap();
-
         tim.psc.write(|w| unsafe { w.psc().bits(psc) });
 
         let arr = u16(ticks / u32(psc + 1)).unwrap();
 
         tim.arr.write(|w| unsafe { w.bits(u32(arr)) });
+
+        let ccr = arr / 5;
+        tim.ccr1.write(|w| w.ccr().bits(ccr));
 
         // Trigger an update event to load the prescaler value to the clock
         tim.egr.write(|w| w.ug().set_bit());
@@ -39,7 +41,7 @@ impl PwmPatternDB {
         tim.sr.modify(|_, w| w.uif().clear_bit());
 
         // Enable the Interrupt
-        tim.dier.write(|w| w.uie().set_bit());
+        tim.dier.write(|w| w.uie().set_bit().cc1ie().set_bit());
 
         // Start the timer
         tim.cr1.modify(|_, w| w.cen().set_bit());
@@ -53,5 +55,6 @@ impl PwmPatternDB {
 
     pub fn reset_isr(&mut self) {
         self.tim.sr.modify(|_, w| w.uif().clear_bit());
+        self.tim.sr.modify(|_, w| w.cc1if().clear_bit());
     }
 }
