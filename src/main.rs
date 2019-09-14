@@ -12,6 +12,7 @@ use rtfm::app;
 use stm32f1xx_hal::gpio::{Output, PushPull};
 use stm32f1xx_hal::prelude::*;
 
+mod color;
 mod ws2812;
 
 #[app(device = stm32f1xx_hal::stm32)]
@@ -34,7 +35,7 @@ const APP: () = {
 
         // Setup On Board LED
         let mut gpioa = c.device.GPIOA.split(&mut rcc.apb2);
-        let mut led = gpioa.pa5.into_push_pull_output(&mut gpioa.crl);
+        let led = gpioa.pa5.into_push_pull_output(&mut gpioa.crl);
 
         // Setup the PWM Output
         let tim2 = stm32f1xx_hal::timer::Timer::tim2(c.device.TIM2, 1.hz(), clocks, &mut rcc.apb1);

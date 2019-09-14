@@ -84,6 +84,7 @@ impl PwmPatternDB {
         }
     }
 
+    /// Set the Memory Address an start timer and dma
     pub fn start(&mut self, buffer: &mut [u16; 48]) {
         for item in buffer.iter_mut().step_by(2) {
             *item = 40_000;
@@ -101,22 +102,26 @@ impl PwmPatternDB {
         self.tim.cr1.modify(|_, w| w.cen().set_bit());
     }
 
+    /// Stop the DMA transfer
     pub fn stop(&mut self) {
         self.dma_ch.stop();
     }
 
+    /// Reset timer interrupt flag
     pub fn reset_isr_tim(&mut self) {
         self.tim
             .sr
             .modify(|_, w| w.uif().clear_bit().cc1if().clear_bit());
     }
 
+    /// Reset dma interrupt flag
     pub fn reset_isr_dma(&mut self) {
         self.dma_ch
             .ifcr()
             .write(|w| w.ctcif2().clear().chtif2().clear());
     }
 
+    /// Check if the timer interrupt is a compare interrupt
     pub fn is_cmp_irq(&self) -> bool {
         !self.tim.sr.read().uif().is_update_pending()
     }
