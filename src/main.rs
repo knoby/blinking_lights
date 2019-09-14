@@ -13,6 +13,7 @@ use stm32f1xx_hal::gpio::{Output, PushPull};
 use stm32f1xx_hal::prelude::*;
 
 mod color;
+mod led_matrix_8x8;
 mod ws2812;
 
 #[app(device = stm32f1xx_hal::stm32)]
