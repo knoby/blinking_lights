@@ -1,12 +1,16 @@
+use crate::color;
 use cast::{u16, u32};
 use stm32f1xx_hal::prelude::*;
-use stm32f1xx_hal::timer::PclkSrc;
+//use stm32f1xx_hal::timer::PclkSrc;
 
 // Trait for PWM Output of a pattern with double buffer support
 pub struct PwmPatternDB {
     tim: stm32f1xx_hal::device::TIM2,
     dma_ch: stm32f1xx_hal::dma::dma1::C2,
-    //clocks: stm32f1xx_hal::rcc::Clocks,
+    double_buffer: [u16; 48], // the double buffer --> 3*8 byte for the bits of the color
+    lower_buffer_active: bool, // DMA Transfer is active for the lower part of the buffer
+    duty_zero: u16,
+    duty_one: u16,
 }
 
 impl PwmPatternDB {
@@ -22,7 +26,7 @@ impl PwmPatternDB {
         //let frequency = 800.khz(); // T = 1.25u --> Length for WS2812
         let frequency = 2.hz(); // Testing Frequency to visulise LED
 
-        let timer_clock = stm32f1xx_hal::device::TIM2::get_clk(&clocks);
+        let timer_clock = clocks.pclk2();
 
         let ticks = timer_clock.0 / frequency.0;
         let psc = u16((ticks - 1) / (1 << 16)).unwrap();
@@ -80,22 +84,32 @@ impl PwmPatternDB {
         PwmPatternDB {
             tim,
             dma_ch,
-            //clocks,
+            double_buffer: [0; 48],
+            lower_buffer_active: false,
+            duty_zero: (u32::from(arr) * 28_u32 / 100_u32) as u16,
+            duty_one: (u32::from(arr) * 56_u32 / 100_u32) as u16,
+        }
+    }
+
+    fn set_next_buffer(&mut self, color: color::Color) {
+        if self.lower_buffer_active {
+            self.set_color_pattern(color, true);
+        } else {
+            self.set_color_pattern(color, false);
         }
     }
 
     /// Set the Memory Address an start timer and dma
-    pub fn start(&mut self, buffer: &mut [u16; 48]) {
-        for item in buffer.iter_mut().step_by(2) {
-            *item = 40_000;
-        }
-
-        for item in buffer.iter_mut().skip(1).step_by(2) {
-            *item = 5000;
-        }
+    pub fn start(&mut self, first_color: color::Color) {
         // Set Memory Add
         self.dma_ch
-            .set_memory_address(buffer as *const _ as u32, true);
+            .set_memory_address(&self.double_buffer as *const _ as u32, true);
+        // mark lower as active
+        self.lower_buffer_active = true;
+        // Set the first color
+        self.set_color_pattern(first_color, self.lower_buffer_active);
+        // Prepare reset pattern
+        set_reset_pattern(&mut self.double_buffer[24..48]);
         // Enable DMA
         self.dma_ch.start();
         // Start the timer
@@ -124,5 +138,46 @@ impl PwmPatternDB {
     /// Check if the timer interrupt is a compare interrupt
     pub fn is_cmp_irq(&self) -> bool {
         !self.tim.sr.read().uif().is_update_pending()
+    }
+
+    // Generates the timing data for the Color
+    fn set_color_pattern(&mut self, color: color::Color, use_upper_bytes: bool) {
+        let mut bit_mask = 0b1000_0000;
+        let color_byte: [u8; 3] = color.into();
+        let offset = if use_upper_bytes { 0 } else { 24 };
+        for bit_num in 0..8 {
+            self.double_buffer[bit_num + offset] = if (color_byte[0] & bit_mask) > 0 {
+                self.duty_one
+            } else {
+                self.duty_zero
+            };
+
+            bit_mask = bit_mask >> 1;
+        }
+        for bit_num in 8..16 {
+            self.double_buffer[bit_num + offset] = if (color_byte[1] & bit_mask) > 0 {
+                self.duty_one
+            } else {
+                self.duty_zero
+            };
+
+            bit_mask = bit_mask >> 1;
+        }
+        for bit_num in 16..24 {
+            self.double_buffer[bit_num + offset] = if (color_byte[2] & bit_mask) > 0 {
+                self.duty_one
+            } else {
+                self.duty_zero
+            };
+
+            bit_mask = bit_mask >> 1;
+        }
+    }
+}
+
+// Generates the timing data for a reset
+fn set_reset_pattern(slice: &mut [u16]) {
+    for byte in slice {
+        *byte = 0;
     }
 }

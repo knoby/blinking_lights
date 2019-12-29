@@ -16,14 +16,16 @@ mod color;
 mod led_matrix_8x8;
 mod ws2812;
 
-#[app(device = stm32f1xx_hal::stm32)]
+#[app(device = stm32f1xx_hal::stm32, peripherals=true)]
 const APP: () = {
-    static mut ON_BOARD_LED: stm32f1xx_hal::gpio::gpioa::PA5<Output<PushPull>> = ();
-    static mut TIMER: ws2812::PwmPatternDB = ();
-    static mut DMA_BUFFER: [u16; 48] = [0; 48];
+    struct Resources {
+        ON_BOARD_LED: stm32f1xx_hal::gpio::gpioa::PA5<Output<PushPull>>,
+        WS2812: ws2812::PwmPatternDB,
+        DISPLAY_BUFFER: led_matrix_8x8::LedMatrix8x8,
+    }
 
-    #[init(schedule=[cyclic], resources=[DMA_BUFFER])]
-    fn init(mut c: init::Context) -> init::LateResources {
+    #[init(schedule=[], resources=[])]
+    fn init(c: init::Context) -> init::LateResources {
         // Freeze clock frequencies
         let mut flash = c.device.FLASH.constrain();
         let mut rcc = c.device.RCC.constrain();
@@ -39,52 +41,37 @@ const APP: () = {
         let led = gpioa.pa5.into_push_pull_output(&mut gpioa.crl);
 
         // Setup the PWM Output
-        let tim2 = stm32f1xx_hal::timer::Timer::tim2(c.device.TIM2, 1.hz(), clocks, &mut rcc.apb1);
+        let tim2 = stm32f1xx_hal::timer::Timer::tim2(c.device.TIM2, &clocks, &mut rcc.apb1);
         let dma1_c2 = c.device.DMA1.split(&mut rcc.ahb).2;
-        let mut ws2812 = ws2812::PwmPatternDB::new(tim2, dma1_c2, clocks);
-
-        c.schedule
-            .cyclic(rtfm::Instant::now() + 32_000_000.cycles())
-            .unwrap();
-
-        ws2812.start(&mut c.resources.DMA_BUFFER);
+        let ws2812 = ws2812::PwmPatternDB::new(tim2, dma1_c2, clocks);
 
         init::LateResources {
             ON_BOARD_LED: led,
-            TIMER: ws2812,
+            WS2812: ws2812,
+            DISPLAY_BUFFER: led_matrix_8x8::LedMatrix8x8::new(color::Color::white()),
         }
     }
 
-    #[idle()]
-    fn idle(_c: idle::Context) -> ! {
+    #[idle(resources = [WS2812])]
+    fn idle(mut c: idle::Context) -> ! {
+        // Start the LEDs
+        c.resources
+            .WS2812
+            .lock(|WS2812| WS2812.start(color::Color::red()));
         loop {
             cortex_m::asm::nop();
         }
     }
 
-    #[task(schedule=[cyclic], resources=[])]
-    fn cyclic(c: cyclic::Context) {
-        c.schedule
-            .cyclic(rtfm::Instant::now() + 32_000_000.cycles())
-            .unwrap();
+    #[task(binds=TIM2,resources = [ON_BOARD_LED, WS2812])]
+    fn tim2(c: tim2::Context) {
+        c.resources.ON_BOARD_LED.toggle().unwrap();
+        c.resources.WS2812.reset_isr_tim();
     }
 
-    #[interrupt( resources = [ON_BOARD_LED, TIMER])]
-    fn TIM2(mut c: TIM2::Context) {
-        if c.resources.TIMER.is_cmp_irq() {
-            #[allow(deprecated)]
-            c.resources.ON_BOARD_LED.set_low();
-        } else {
-            #[allow(deprecated)]
-            c.resources.ON_BOARD_LED.set_high();
-        }
-
-        c.resources.TIMER.reset_isr_tim();
-    }
-
-    #[interrupt( resources = [TIMER])]
-    fn DMA1_CHANNEL2(mut c: DMA1_CHANNEL2::Context) {
-        c.resources.TIMER.reset_isr_dma();
+    #[task(binds=DMA1_CHANNEL2,resources = [WS2812])]
+    fn dma1_channel2(c: dma1_channel2::Context) {
+        c.resources.WS2812.reset_isr_dma();
     }
 
     extern "C" {
