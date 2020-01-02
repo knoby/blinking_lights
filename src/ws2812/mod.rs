@@ -1,7 +1,7 @@
 use crate::color;
 use cast::{u16, u32};
+use stm32f1xx_hal::gpio::{Alternate, PushPull};
 use stm32f1xx_hal::prelude::*;
-//use stm32f1xx_hal::timer::PclkSrc;
 
 // Trait for PWM Output of a pattern with double buffer support
 pub struct PwmPatternDB {
@@ -18,13 +18,13 @@ impl PwmPatternDB {
         tim: stm32f1xx_hal::timer::Timer<stm32f1xx_hal::device::TIM2>,
         mut dma_ch: stm32f1xx_hal::dma::dma1::C2,
         clocks: stm32f1xx_hal::rcc::Clocks,
+        out_pin: stm32f1xx_hal::gpio::gpioa::PA0<Alternate<PushPull>>,
     ) -> Self {
         // Get the internal registers of the timer
         let tim = tim.release();
 
         // Calculate the timer prescaler
-        //let frequency = 800.khz(); // T = 1.25u --> Length for WS2812
-        let frequency = 2.hz(); // Testing Frequency to visulise LED
+        let frequency = 800_000.hz(); // T = 1.25u --> Length for WS2812
 
         let timer_clock = clocks.pclk2();
 
@@ -61,6 +61,22 @@ impl PwmPatternDB {
             dma_ch.ch().ndtr.write(|w| w.bits(48));
         }
 
+        // Enable PWM Output for Channel 1
+        unsafe {
+            tim.ccmr1_output().write(|w| {
+                w.cc1s()
+                    .bits(0b00) // Set Output Mode
+                    .oc1fe()
+                    .clear_bit() // Disable fast compare
+                    .oc1pe()
+                    .clear_bit() // Disable Preload Register
+                    .oc1m()
+                    .bits(0b110) // Enable PWM Mode 1 --> Output active aslong as ctn < cmp
+            });
+        }
+
+        tim.ccer.write(|w| w.cc1e().set_bit()); // Enable Output Circuit
+
         // Configuration of DMA
         unsafe {
             dma_ch.ch().cr.write(|w| {
@@ -86,16 +102,18 @@ impl PwmPatternDB {
             dma_ch,
             double_buffer: [0; 48],
             lower_buffer_active: false,
-            duty_zero: (u32::from(arr) * 28_u32 / 100_u32) as u16,
-            duty_one: (u32::from(arr) * 56_u32 / 100_u32) as u16,
+            duty_zero: (u32::from(arr) * 35_u32 / 125_u32) as u16,
+            duty_one: (u32::from(arr) * 70_u32 / 125_u32) as u16,
         }
     }
 
-    fn set_next_buffer(&mut self, color: color::Color) {
+    pub fn set_next_buffer(&mut self, color: color::Color) {
         if self.lower_buffer_active {
             self.set_color_pattern(color, true);
+            self.lower_buffer_active = false;
         } else {
             self.set_color_pattern(color, false);
+            self.lower_buffer_active = true;
         }
     }
 
@@ -107,11 +125,13 @@ impl PwmPatternDB {
         // mark lower as active
         self.lower_buffer_active = true;
         // Set the first color
-        self.set_color_pattern(first_color, self.lower_buffer_active);
+        self.set_color_pattern(first_color, false);
         // Prepare reset pattern
-        set_reset_pattern(&mut self.double_buffer[24..48]);
+        self.set_reset_pattern();
         // Enable DMA
         self.dma_ch.start();
+        // Triger update to load first value to ccr
+        self.tim.egr.write(|w| w.ug().set_bit());
         // Start the timer
         self.tim.cr1.modify(|_, w| w.cen().set_bit());
     }
@@ -144,7 +164,7 @@ impl PwmPatternDB {
     fn set_color_pattern(&mut self, color: color::Color, use_upper_bytes: bool) {
         let mut bit_mask = 0b1000_0000;
         let color_byte: [u8; 3] = color.into();
-        let offset = if use_upper_bytes { 0 } else { 24 };
+        let offset = if use_upper_bytes { 24 } else { 0 };
         for bit_num in 0..8 {
             self.double_buffer[bit_num + offset] = if (color_byte[0] & bit_mask) > 0 {
                 self.duty_one
@@ -154,6 +174,7 @@ impl PwmPatternDB {
 
             bit_mask = bit_mask >> 1;
         }
+        let mut bit_mask = 0b1000_0000;
         for bit_num in 8..16 {
             self.double_buffer[bit_num + offset] = if (color_byte[1] & bit_mask) > 0 {
                 self.duty_one
@@ -163,6 +184,7 @@ impl PwmPatternDB {
 
             bit_mask = bit_mask >> 1;
         }
+        let mut bit_mask = 0b1000_0000;
         for bit_num in 16..24 {
             self.double_buffer[bit_num + offset] = if (color_byte[2] & bit_mask) > 0 {
                 self.duty_one
@@ -173,11 +195,11 @@ impl PwmPatternDB {
             bit_mask = bit_mask >> 1;
         }
     }
-}
 
-// Generates the timing data for a reset
-fn set_reset_pattern(slice: &mut [u16]) {
-    for byte in slice {
-        *byte = 0;
+    // Generates the timing data for a reset
+    pub fn set_reset_pattern(&mut self) {
+        for byte in self.double_buffer[24..48].iter_mut() {
+            *byte = 0;
+        }
     }
 }
