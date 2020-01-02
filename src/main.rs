@@ -24,7 +24,7 @@ const APP: () = {
     struct Resources {
         ON_BOARD_LED: stm32f1xx_hal::gpio::gpioa::PA5<Output<PushPull>>,
         WS2812: ws2812::PwmPatternDB,
-        DISPLAY_BUFFER: led_matrix_8x8::LedMatrix8x8,
+        DISPLAY_BUFFER: ws2812::DisplayBuffer,
     }
 
     #[init(schedule=[], resources=[])]
@@ -56,37 +56,33 @@ const APP: () = {
         init::LateResources {
             ON_BOARD_LED: led,
             WS2812: ws2812,
-            DISPLAY_BUFFER: led_matrix_8x8::LedMatrix8x8::new(color::Color::white()),
+            DISPLAY_BUFFER: [0; 24 * 64 + 50],
         }
     }
 
-    #[idle(resources = [WS2812, ON_BOARD_LED])]
+    #[idle(resources = [WS2812, DISPLAY_BUFFER])]
     fn idle(mut c: idle::Context) -> ! {
-        // Set the LED off
-        c.resources.ON_BOARD_LED.lock(|LED| LED.set_low().unwrap());
+        // Set the first three Colors
+        c.resources.WS2812.set_color_pattern(
+            color::Color::red(),
+            0,
+            &mut c.resources.DISPLAY_BUFFER,
+        );
+        c.resources.WS2812.set_color_pattern(
+            color::Color::green(),
+            1,
+            &mut c.resources.DISPLAY_BUFFER,
+        );
+        c.resources.WS2812.set_color_pattern(
+            color::Color::blue(),
+            2,
+            &mut c.resources.DISPLAY_BUFFER,
+        );
         // Start the LEDs
-        c.resources.WS2812.lock(|WS2812| {
-            WS2812.start(color::Color::white());
-            WS2812.set_next_buffer(color::Color::white());
-        });
+        c.resources.WS2812.start(c.resources.DISPLAY_BUFFER);
         loop {
             cortex_m::asm::nop();
         }
-    }
-
-    #[task(binds=DMA1_CHANNEL2, resources = [WS2812, ON_BOARD_LED])]
-    fn dma1_channel2(c: dma1_channel2::Context) {
-        static mut color_count: u8 = 0;
-
-        *color_count += 1;
-        if *color_count == 3 {
-            c.resources.WS2812.stop();
-        }
-        if *color_count == 2 {
-            c.resources.WS2812.set_reset_pattern();
-        }
-
-        c.resources.WS2812.reset_isr_dma();
     }
 
     extern "C" {
