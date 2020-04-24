@@ -25,7 +25,7 @@ impl PwmPatternDB {
 
         // Calculate the timer prescaler
         let frequency = 800_000.hz(); // T = 1.25u --> Length for WS2812
-                                      //let frequency = 2.hz(); // T = 1.25u --> Length for WS2812
+                                      //let frequency = 1.hz(); // T = 1.25u --> Length for WS2812
 
         let timer_clock = clocks.pclk2();
 
@@ -65,7 +65,7 @@ impl PwmPatternDB {
                     .oc1fe()
                     .clear_bit() // Disable fast compare
                     .oc1pe()
-                    .clear_bit() // Disable Preload Register
+                    .set_bit() // Disable Preload Register
                     .oc1m()
                     .bits(0b110) // Enable PWM Mode 1 --> Output active aslong as ctn < cmp
             });
@@ -97,12 +97,12 @@ impl PwmPatternDB {
             tim,
             dma_ch,
             duty_zero: (u32::from(arr) * 35_u32 / 125_u32) as u16,
-            duty_one: (u32::from(arr) * 70_u32 / 125_u32) as u16,
+            duty_one: (u32::from(arr) * 60_u32 / 125_u32) as u16,
         }
     }
 
     /// Set the Memory Address an start timer and dma
-    pub fn start(&mut self, buffer: &'static mut DisplayBuffer) {
+    pub fn start(&mut self, buffer: &mut DisplayBuffer) {
         // Set Memory Add
         self.dma_ch
             .set_memory_address(buffer as *const _ as u32, true);
@@ -110,10 +110,14 @@ impl PwmPatternDB {
         unsafe {
             self.dma_ch.ch().ndtr.write(|w| w.bits(buffer.len() as u32));
         }
+        // Load value zero to the ccr
+        unsafe {
+            self.tim.ccr1.write(|w| w.bits(0x00));
+        }
+
+        self.tim.egr.write(|w| w.ug().set_bit());
         // Enable DMA
         self.dma_ch.start();
-        // Triger update to load first value to ccr
-        self.tim.egr.write(|w| w.ug().set_bit());
         // Start the timer
         self.tim.cr1.modify(|_, w| w.cen().set_bit());
     }
@@ -142,6 +146,11 @@ impl PwmPatternDB {
         !self.tim.sr.read().uif().is_update_pending()
     }
 
+    /// Check if transfer is active
+    pub fn is_active(&self) -> bool {
+        self.dma_ch.in_progress()
+    }
+
     // Generates the timing data for the Color
     pub fn set_color_pattern(
         &self,
@@ -150,9 +159,8 @@ impl PwmPatternDB {
         buffer: &mut DisplayBuffer,
     ) {
         let mut bit_mask = 0b1000_0000;
-        let color_byte: [u8; 3] = color.into();
         for bit_num in 0..8 {
-            buffer[bit_num + (24 * led_num)] = if (color_byte[0] & bit_mask) > 0 {
+            buffer[bit_num + (24 * led_num)] = if (color.g & bit_mask) > 0 {
                 self.duty_one
             } else {
                 self.duty_zero
@@ -162,7 +170,7 @@ impl PwmPatternDB {
         }
         let mut bit_mask = 0b1000_0000;
         for bit_num in 8..16 {
-            buffer[bit_num + (24 * led_num)] = if (color_byte[1] & bit_mask) > 0 {
+            buffer[bit_num + (24 * led_num)] = if (color.r & bit_mask) > 0 {
                 self.duty_one
             } else {
                 self.duty_zero
@@ -172,7 +180,7 @@ impl PwmPatternDB {
         }
         let mut bit_mask = 0b1000_0000;
         for bit_num in 16..24 {
-            buffer[bit_num + (24 * led_num)] = if (color_byte[2] & bit_mask) > 0 {
+            buffer[bit_num + (24 * led_num)] = if (color.b & bit_mask) > 0 {
                 self.duty_one
             } else {
                 self.duty_zero

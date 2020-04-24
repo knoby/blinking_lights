@@ -28,7 +28,13 @@ const APP: () = {
     }
 
     #[init(schedule=[], resources=[])]
-    fn init(c: init::Context) -> init::LateResources {
+    fn init(mut c: init::Context) -> init::LateResources {
+        // Initialize (enable) the monotonic timer (CYCCNT)
+        c.core.DCB.enable_trace();
+        // required on devices that software lock the DWT (e.g. STM32F7)
+        unsafe { c.core.DWT.lar.write(0xC5ACCE55) }
+        c.core.DWT.enable_cycle_counter();
+
         // Freeze clock frequencies
         let mut flash = c.device.FLASH.constrain();
         let mut rcc = c.device.RCC.constrain();
@@ -60,29 +66,47 @@ const APP: () = {
         }
     }
 
-    #[idle(resources = [WS2812, DISPLAY_BUFFER])]
-    fn idle(mut c: idle::Context) -> ! {
-        // Set the first three Colors
-        c.resources.WS2812.set_color_pattern(
-            color::Color::red(),
-            0,
-            &mut c.resources.DISPLAY_BUFFER,
-        );
-        c.resources.WS2812.set_color_pattern(
-            color::Color::green(),
-            1,
-            &mut c.resources.DISPLAY_BUFFER,
-        );
-        c.resources.WS2812.set_color_pattern(
-            color::Color::blue(),
-            2,
-            &mut c.resources.DISPLAY_BUFFER,
-        );
-        // Start the LEDs
-        c.resources.WS2812.start(c.resources.DISPLAY_BUFFER);
+    #[idle(schedule = [update_display])]
+    fn idle(c: idle::Context) -> ! {
+        c.schedule.update_display(Instant::now()).unwrap();
         loop {
             cortex_m::asm::nop();
         }
+    }
+
+    #[task(resources = [WS2812, DISPLAY_BUFFER, ON_BOARD_LED], schedule=[update_display])]
+    fn update_display(mut c: update_display::Context) {
+        static mut led_num: usize = 0;
+
+        for num in 0..64 {
+            c.resources.WS2812.set_color_pattern(
+                color::Color::led_off(),
+                num,
+                c.resources.DISPLAY_BUFFER,
+            );
+        }
+        for num in 0..64 {
+            c.resources.WS2812.set_color_pattern(
+                color::Color::new(1 * *led_num as u8, 0, 1 * (64 - *led_num as u8)),
+                num,
+                c.resources.DISPLAY_BUFFER,
+            );
+        }
+
+        c.resources.WS2812.start(c.resources.DISPLAY_BUFFER);
+        while c.resources.WS2812.is_active() {
+            cortex_m::asm::nop();
+        }
+        c.resources.WS2812.reset_isr_dma();
+        c.resources.WS2812.stop();
+        if *led_num < 64 {
+            *led_num += 1;
+        } else {
+            *led_num = 0;
+        }
+        c.schedule
+            .update_display(Instant::now() + 64_00_000.cycles())
+            .unwrap();
     }
 
     extern "C" {
