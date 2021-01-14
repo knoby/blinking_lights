@@ -3,7 +3,25 @@ use cast::{u16, u32};
 use stm32f1xx_hal::gpio::{Alternate, PushPull};
 use stm32f1xx_hal::prelude::*;
 
-pub type DisplayBuffer = [u16; 24 * 64 + 50];
+// Buffer to hold the data for the dma
+// Adjust NUM_LEDS to the desired number
+const NUM_LEDS: usize = 64;
+const NUM_RESET: usize = 50;
+// Size is calculated as following:
+// Each color has 8 bits --> 8 bytes to decode the timings for the timer
+// one LED has 3 colors --> 24 bytes
+// after putting the colors to the led we need a reset pulse. this is coded as 50 bytes with zero length
+pub type DisplayBuffer = [u16; 24 * NUM_LEDS + NUM_RESET];
+
+impl InitBuffer for DisplayBuffer {
+    fn new() -> Self {
+        [0; 24 * NUM_LEDS + NUM_RESET]
+    }
+}
+
+pub trait InitBuffer {
+    fn new() -> DisplayBuffer;
+}
 
 // Trait for PWM Output of a pattern with double buffer support
 pub struct PwmPatternDB {
@@ -11,6 +29,7 @@ pub struct PwmPatternDB {
     dma_ch: stm32f1xx_hal::dma::dma1::C2,
     duty_zero: u16,
     duty_one: u16,
+    _out_pin: stm32f1xx_hal::gpio::gpioa::PA0<Alternate<PushPull>>, // Only saved but is controled by the timer
 }
 
 impl PwmPatternDB {
@@ -25,13 +44,12 @@ impl PwmPatternDB {
 
         // Calculate the timer prescaler
         let frequency = 800_000.hz(); // T = 1.25u --> Length for WS2812
-                                      //let frequency = 1.hz(); // T = 1.25u --> Length for WS2812
 
         let timer_clock = clocks.pclk2();
 
         let ticks = timer_clock.0 / frequency.0;
         let psc = u16((ticks - 1) / (1 << 16)).unwrap();
-        tim.psc.write(|w| unsafe { w.psc().bits(psc) });
+        tim.psc.write(|w| w.psc().bits(psc));
 
         let arr = u16(ticks / u32(psc + 1)).unwrap();
 
@@ -98,6 +116,7 @@ impl PwmPatternDB {
             dma_ch,
             duty_zero: (u32::from(arr) * 35_u32 / 125_u32) as u16,
             duty_one: (u32::from(arr) * 60_u32 / 125_u32) as u16,
+            _out_pin: out_pin,
         }
     }
 
@@ -166,7 +185,7 @@ impl PwmPatternDB {
                 self.duty_zero
             };
 
-            bit_mask = bit_mask >> 1;
+            bit_mask >>= 1;
         }
         let mut bit_mask = 0b1000_0000;
         for bit_num in 8..16 {
@@ -176,7 +195,7 @@ impl PwmPatternDB {
                 self.duty_zero
             };
 
-            bit_mask = bit_mask >> 1;
+            bit_mask >>= 1;
         }
         let mut bit_mask = 0b1000_0000;
         for bit_num in 16..24 {
@@ -186,7 +205,7 @@ impl PwmPatternDB {
                 self.duty_zero
             };
 
-            bit_mask = bit_mask >> 1;
+            bit_mask >>= 1;
         }
     }
 }

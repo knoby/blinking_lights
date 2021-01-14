@@ -1,6 +1,3 @@
-//#![deny(unsafe_code)]
-//#![deny(warnings)]
-//#![allow(deprecated)]
 #![no_main]
 #![no_std]
 
@@ -8,10 +5,8 @@
 //extern crate panic_semihosting;
 extern crate panic_halt;
 
-use cortex_m;
-use embedded_hal::digital::v2::OutputPin;
-use rtfm::app;
-use rtfm::cyccnt::{Duration, Instant, U32Ext};
+use rtic::app;
+use rtic::cyccnt::{Instant, U32Ext};
 use stm32f1xx_hal::gpio::{Output, PushPull};
 use stm32f1xx_hal::prelude::*;
 
@@ -19,7 +14,9 @@ mod color;
 mod led_matrix_8x8;
 mod ws2812;
 
-#[app(device = stm32f1xx_hal::stm32, peripherals=true, monotonic=rtfm::cyccnt::CYCCNT)]
+use ws2812::InitBuffer;
+
+#[app(device = stm32f1xx_hal::device, peripherals=true, monotonic=rtic::cyccnt::CYCCNT)]
 const APP: () = {
     struct Resources {
         ON_BOARD_LED: stm32f1xx_hal::gpio::gpioa::PA5<Output<PushPull>>,
@@ -62,7 +59,7 @@ const APP: () = {
         init::LateResources {
             ON_BOARD_LED: led,
             WS2812: ws2812,
-            DISPLAY_BUFFER: [0; 24 * 64 + 50],
+            DISPLAY_BUFFER: ws2812::DisplayBuffer::new(),
         }
     }
 
@@ -75,37 +72,37 @@ const APP: () = {
     }
 
     #[task(resources = [WS2812, DISPLAY_BUFFER, ON_BOARD_LED], schedule=[update_display])]
-    fn update_display(mut c: update_display::Context) {
-        static mut led_num: usize = 0;
+    fn update_display(cx: update_display::Context) {
+        static mut TOP_LED: usize = 0;
 
         for num in 0..64 {
-            c.resources.WS2812.set_color_pattern(
+            cx.resources.WS2812.set_color_pattern(
                 color::Color::led_off(),
                 num,
-                c.resources.DISPLAY_BUFFER,
+                cx.resources.DISPLAY_BUFFER,
             );
         }
         for num in 0..64 {
-            c.resources.WS2812.set_color_pattern(
-                color::Color::new(1 * *led_num as u8, 0, 1 * (64 - *led_num as u8)),
+            cx.resources.WS2812.set_color_pattern(
+                color::Color::new(*TOP_LED as u8, 0, 64 - *TOP_LED as u8),
                 num,
-                c.resources.DISPLAY_BUFFER,
+                cx.resources.DISPLAY_BUFFER,
             );
         }
 
-        c.resources.WS2812.start(c.resources.DISPLAY_BUFFER);
-        while c.resources.WS2812.is_active() {
+        cx.resources.WS2812.start(cx.resources.DISPLAY_BUFFER);
+        while cx.resources.WS2812.is_active() {
             cortex_m::asm::nop();
         }
-        c.resources.WS2812.reset_isr_dma();
-        c.resources.WS2812.stop();
-        if *led_num < 64 {
-            *led_num += 1;
+        cx.resources.WS2812.reset_isr_dma();
+        cx.resources.WS2812.stop();
+        if *TOP_LED < 64 {
+            *TOP_LED += 1;
         } else {
-            *led_num = 0;
+            *TOP_LED = 0;
         }
-        c.schedule
-            .update_display(Instant::now() + 64_00_000.cycles())
+        cx.schedule
+            .update_display(Instant::now() + 6_400_000.cycles())
             .unwrap();
     }
 

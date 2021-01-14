@@ -1,38 +1,32 @@
 [package]
-name = "blinking_lights"
-version = "0.1.0"
 authors = ["KnobY <maximilian.brinkmann@posteo.de>"]
 edition = "2018"
-
-
+name = "blinking_lights"
+version = "0.2.0"
 
 [dependencies]
-cortex-m = "0.6.1"
-cortex-m-semihosting = "0.3.5"
-panic-semihosting = "0.5.3"
+bobbin-bits = "*"
+cortex-m = "0.6.4"
+cortex-m-rt = "0.6.13"
+cortex-m-semihosting = "0.3.7"
+nb = "1.0.0"
 panic-halt = "0.2.0"
-cortex-m-rt = "0.6.11"
-nb = "*"
-bobbin-bits ="*"
+panic-semihosting = "0.5.6"
 
 [dependencies.cast]
-version = "0.2.3"
 default-features = false
+version = "0.2.3"
 
 [dependencies.embedded-hal]
-version = "0.2.3"
-features =["unproven"]
+features = ["unproven"]
+version = "0.2.4"
 
 [dependencies.stm32f1xx-hal]
-version = "0.5.2"
 features = ["rt", "stm32f103"]
+version = "0.7.0"
 
-[dependencies.cortex-m-rtfm]
-version = "0.5.1"
-
-[dependencies.stm32f1]
-version = "0.9.0"
-features = ["stm32f103", "rt"]
+[dependencies.cortex-m-rtic]
+version = "0.5.5"
 
 [profile.release]
 codegen-units = 1
